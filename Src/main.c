@@ -51,6 +51,7 @@ typedef enum
 static QueueHandle_t     led_task_cmd_queue;
 volatile char sim;
 UART_HandleTypeDef huart1;
+static QueueHandle_t uart_rxq;	// RX queue
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -109,7 +110,21 @@ void StartDefaultTask(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+static void led_task_cmd(led_task_cmd_t cmd)
+{
+    uint8_t item = (uint8_t)cmd;
+    // Post command to LED task queue
+    if(xQueueSendToBack(led_task_cmd_queue, &item, 0) != pdPASS){}
+}
+static void
+main_task(void *args __attribute((unused))) {
+    uint8_t str[2];
+    for (;;) {
+        while ( xQueueReceive(uart_rxq,&str,0) != pdPASS )
+            taskYIELD();
+        if (str[0] == 0x10) led_task_cmd(str[1]);
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -184,9 +199,11 @@ int main(void)
 
     led_task_cmd_queue = xQueueCreate(2, sizeof(uint8_t));
     xTaskCreate(&task_led, "LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+    xTaskCreate(main_task,"MAIN",100,NULL,configMAX_PRIORITIES-1,NULL);
 
     vTaskStartScheduler();
 
+    HAL_UART_Receive_IT(&huart1, (uint8_t*)&sim, 2);
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -196,6 +213,14 @@ int main(void)
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    BaseType_t hptask=pdFALSE;
+
+    xQueueSendFromISR(uart_rxq,(uint8_t*)&sim,&hptask);
+    HAL_UART_Receive_IT(&huart1, (uint8_t*)&sim, 2);
 }
 
 /**
