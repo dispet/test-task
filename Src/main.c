@@ -51,7 +51,7 @@ typedef enum
 static QueueHandle_t     led_task_cmd_queue;
 volatile char sim;
 UART_HandleTypeDef huart1;
-static QueueHandle_t uart_rxq;	// RX queue
+static QueueHandle_t uart_rxq, uart_txq;
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -61,6 +61,12 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+static inline void uart_putc(char ch) {
+    // Queue the byte to send
+    while ( xQueueSend(uart_txq,&ch,0) != pdPASS )
+        taskYIELD();
+}
+
 static void task_led(void *pvParameters)
 {
     uint8_t    cmd;
@@ -92,6 +98,12 @@ static void task_led(void *pvParameters)
                         delay += pdMS_TO_TICKS(50);
                     }
                     break;
+
+                default:{
+                    uart_putc('e');
+                }
+
+                    break;
             }
         }
     }
@@ -116,13 +128,29 @@ static void led_task_cmd(led_task_cmd_t cmd)
     // Post command to LED task queue
     if(xQueueSendToBack(led_task_cmd_queue, &item, 0) != pdPASS){}
 }
-static void
-main_task(void *args __attribute((unused))) {
+
+static void tx_task(void *args __attribute((unused))) {
+    char ch;
+    uint8_t str[1];
+
+    for (;;) {
+        while ( xQueueReceive(uart_txq,&ch,portMAX_DELAY) != pdPASS )
+            taskYIELD();
+        str[0]=(uint8_t)ch;
+        // Received a char to transmit:
+        while( HAL_UART_GetState (&huart1) == HAL_UART_STATE_BUSY_TX )
+            taskYIELD();
+        HAL_UART_Transmit_IT(&huart1, str, 1);
+    }
+}
+
+static void main_task(void *args __attribute((unused))) {
     uint8_t str[2];
     for (;;) {
         while ( xQueueReceive(uart_rxq,&str,0) != pdPASS )
             taskYIELD();
-        if (str[0] == 0x10) led_task_cmd(str[1]);
+        if (str[0] != 0x10) uart_putc('e');
+        else led_task_cmd(str[1]);
     }
 }
 /* USER CODE END 0 */
@@ -200,6 +228,7 @@ int main(void)
     led_task_cmd_queue = xQueueCreate(2, sizeof(uint8_t));
     xTaskCreate(&task_led, "LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
     xTaskCreate(main_task,"MAIN",100,NULL,configMAX_PRIORITIES-1,NULL);
+    xTaskCreate(tx_task,"UARTTX",100,NULL,configMAX_PRIORITIES-1,NULL);
 
     vTaskStartScheduler();
 
