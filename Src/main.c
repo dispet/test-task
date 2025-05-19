@@ -17,8 +17,11 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
+#include <stdbool.h>
 #include "main.h"
 #include "cmsis_os.h"
+#include "queue.h"
+#include "task.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -27,7 +30,11 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef enum
+{
+    LED_TASK_CMD_BLINK_FASTER,
+    LED_TASK_CMD_BLINK_SLOWER,
+} led_task_cmd_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -41,6 +48,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+static QueueHandle_t     led_task_cmd_queue;
+volatile char sim;
 UART_HandleTypeDef huart1;
 
 /* Definitions for defaultTask */
@@ -51,7 +60,41 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+static void task_led(void *pvParameters)
+{
+    uint8_t    cmd;
+    TickType_t delay = pdMS_TO_TICKS(250);
 
+    while(true)
+    {
+        // Toggle LED
+        HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_1);
+        vTaskDelay(delay);
+
+        if(xQueueReceive(led_task_cmd_queue, &cmd, 0) == pdTRUE)
+        {
+            // Handle command
+            switch(cmd)
+            {
+                case LED_TASK_CMD_BLINK_FASTER:
+                    // Decrease delay
+                    if(delay > pdMS_TO_TICKS(50))
+                    {
+                        delay -= pdMS_TO_TICKS(50);
+                    }
+                    break;
+
+                case LED_TASK_CMD_BLINK_SLOWER:
+                    // Increase delay
+                    if(delay < pdMS_TO_TICKS(500))
+                    {
+                        delay += pdMS_TO_TICKS(50);
+                    }
+                    break;
+            }
+        }
+    }
+}
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -138,6 +181,11 @@ int main(void)
   osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
+
+    led_task_cmd_queue = xQueueCreate(2, sizeof(uint8_t));
+    xTaskCreate(&task_led, "LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+
+    vTaskStartScheduler();
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
